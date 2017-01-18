@@ -12,6 +12,6 @@ method needs to be had. While using a `preference` is not preferrable, this will
 
 Here is how to get this running:
 
-* `composer require-dev swiftotter/attribute-index-fix`
+* `composer require swiftotter/attribute-index-fix`
 * `php bin/magento module:enable SwiftOtter_AttributeIndexFix`
 * `php bin/magento cache:clean`
