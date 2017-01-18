@@ -13,7 +13,7 @@ use Magento\Catalog\Model\Product\Attribute\Source\Status as ProductStatus;
  * this file adds @maderlock's fix (as found in the mergeWithSourceModel function).
  *
  * Class Source
- * @package ClassicParts\Product\Override\Catalog\Indexer\Eav
+ * @package SwiftOtter\AttributeIndexFix\Override\Catalog\Indexer\Eav
  */
 class Source extends \Magento\Catalog\Model\ResourceModel\Product\Indexer\Eav\Source
 {
