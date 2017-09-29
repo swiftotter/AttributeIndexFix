@@ -29,11 +29,7 @@ class Source extends \Magento\Catalog\Model\ResourceModel\Product\Indexer\Eav\So
         $connection = $this->getConnection();
 
         // prepare multiselect attributes
-        if ($attributeId === null) {
-            $attrIds = $this->_getIndexableAttributes(true);
-        } else {
-            $attrIds = [$attributeId];
-        }
+        $attrIds = $attributeId === null ? $this->_getIndexableAttributes(true) : [$attributeId];
 
         if (!$attrIds) {
             return $this;
@@ -57,20 +53,20 @@ class Source extends \Magento\Catalog\Model\ResourceModel\Product\Indexer\Eav\So
         $productValueExpression = $connection->getCheckSql('pvs.value_id > 0', 'pvs.value', 'pvd.value');
         $select = $connection->select()->from(
             ['pvd' => $this->getTable('catalog_product_entity_varchar')],
-            [$productIdField, 'attribute_id']
+            []
         )->join(
             ['cs' => $this->getTable('store')],
             '',
-            ['store_id']
+            []
         )->joinLeft(
             ['pvs' => $this->getTable('catalog_product_entity_varchar')],
             "pvs.{$productIdField} = pvd.{$productIdField} AND pvs.attribute_id = pvd.attribute_id"
             . ' AND pvs.store_id=cs.store_id',
-            ['value' => $productValueExpression]
+            []
         )->joinLeft(
             ['cpe' => $this->getTable('catalog_product_entity')],
             "cpe.{$productIdField} = pvd.{$productIdField}",
-            ['entity_id']
+            ['']
         )->where(
             'pvd.store_id=?',
             $connection->getIfNullSql('pvs.store_id', \Magento\Store\Model\Store::DEFAULT_STORE_ID)
@@ -82,6 +78,14 @@ class Source extends \Magento\Catalog\Model\ResourceModel\Product\Indexer\Eav\So
             $attrIds
         )->where(
             'cpe.entity_id IS NOT NULL'
+        )->columns(
+            [
+                'entity_id' => 'cpe.entity_id',
+                'attribute_id' => 'attribute_id',
+                'store_id' => 'cs.store_id',
+                'value' => $productValueExpression,
+                'source_id' => 'cpe.entity_id',
+            ]
         );
 
         $statusCond = $connection->quoteInto('=?', ProductStatus::STATUS_ENABLED);
@@ -99,22 +103,33 @@ class Source extends \Magento\Catalog\Model\ResourceModel\Product\Indexer\Eav\So
                 'select' => $select,
                 'entity_field' => new \Zend_Db_Expr('cpe.entity_id'),
                 'website_field' => new \Zend_Db_Expr('cs.website_id'),
-                'store_field' => new \Zend_Db_Expr('cs.store_id')
+                'store_field' => new \Zend_Db_Expr('cs.store_id'),
             ]
         );
 
+        $this->saveDataFromSelect($select, $options);
+
+        return $this;
+    }
+
+    /**
+     * Prepares data from select to save.
+     *
+     * @param \Magento\Framework\DB\Select $select
+     * @param array $options
+     *
+     * @return void
+     */
+    private function saveDataFromSelect(\Magento\Framework\DB\Select $select, array $options)
+    {
         $i = 0;
         $data = [];
         $query = $select->query();
         while ($row = $query->fetch()) {
             $values = explode(',', $row['value']);
             foreach ($values as $valueId) {
-                /**
-                 * SWIFTotter removed following `if` statement. The $options variable was being loaded
-                 * from `eav_attribute_options` and was not in sync with the source model.
-                 */
                 if (isset($options[$row['attribute_id']][$valueId])) {
-                    $data[] = [$row['entity_id'], $row['attribute_id'], $row['store_id'], $valueId];
+                    $data[] = [$row['entity_id'], $row['attribute_id'], $row['store_id'], $valueId, $row['source_id']];
                     $i++;
                     if ($i % 10000 == 0) {
                         $this->_saveIndexData($data);
@@ -125,10 +140,6 @@ class Source extends \Magento\Catalog\Model\ResourceModel\Product\Indexer\Eav\So
         }
 
         $this->_saveIndexData($data);
-        unset($options);
-        unset($data);
-
-        return $this;
     }
 
     /**
@@ -144,21 +155,25 @@ class Source extends \Magento\Catalog\Model\ResourceModel\Product\Indexer\Eav\So
         $objectManager = \Magento\Framework\App\ObjectManager::getInstance();
         $select = $this->getConnection()->select()->from(
             ['ea' => $this->getTable('eav_attribute')],
-            ['attribute_id','source_model']
+            ['attribute_id','entity_type_id', 'attribute_code']
         )->where('attribute_id IN(?)', $attrIds)
             ->where('source_model is not null');
         $query = $select->query();
         while ($row = $query->fetch()) {
             try {
-                // Load custom source class and its options
-                $source = $objectManager->create($row['source_model']);
-                $sourceModelOptions = $source->getAllOptions();
+                /** @var \Magento\Eav\Model\AttributeRepository  $attributeRepository */
+                $attributeRepository = $objectManager->get('Magento\Eav\Model\AttributeRepository');
+                /** @var \Magento\Catalog\Model\ResourceModel\Eav\Attribute $attribute */
+                $attribute = $attributeRepository->get($row['entity_type_id'], $row['attribute_code']);
+                $sourceModelOptions = $attribute->getOptions();
                 // Add options to list used below
                 foreach ($sourceModelOptions as $o) {
-                    $options[$row['attribute_id']][$o["value"]] = true;
+                    $options[$row['attribute_id']][$o->getValue()] = true;
                 }
             } catch (\BadMethodCallException $e) {
                 // Skip
+            } catch (\Magento\Framework\Exception\NoSuchEntityException $e) {
+                // skip
             }
         }
 
